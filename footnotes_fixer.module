@@ -115,12 +115,12 @@ class FofixParser {
 
     // Iterate through sections and collect footnote blocks.
     $sekcje = preg_split($this->re_pb, $this->src);
+    if (!empty($sekcje)) { array_pop($sekcje); }  // remove original section
     foreach($sekcje as $sekcja => $stxt) {
       $t = str_get_html($stxt);
       $footnotes = $t->find('a[rel=footnote]');
       if (!empty($footnotes)) {
         $rendered = '<div class="footnotes">' . "\n    <hr />\n      <ol " . 'start="' . $firstfn . '">' . "\n";
-        $firstfn++;
         foreach($footnotes as $ahref) {
           if (isset($ahref->href)) {
             $fnid = strtolower(trim($ahref->href));
@@ -128,7 +128,8 @@ class FofixParser {
               $fnid = ltrim($fnid, '#');
               if (array_key_exists($fnid, $fn_block_mem)) {
                 $rendered .= "        " . $fn_block_mem[$fnid] . "\n";
-                $fn_moved[$fnid] = $sekcja;
+                $fn_moved[$fnid] = $sekcja;   // mark footnote as moved
+                $firstfn++;                   // increase moved footnotes counter
               }
             }
           }
@@ -148,9 +149,7 @@ class FofixParser {
 
     foreach($orig_footnotes as $k => $v) {
       if (array_key_exists($v->id, $fn_moved)) {
-        if ($fn_moved[$v->id] !== $last_section) {
           $v->outertext = '';
-        }
       }
     }
 
@@ -164,11 +163,11 @@ class FofixParser {
         $fnblock[0]->outertext = "";
       }
       else {
-        $fnblock[0]->innertext = preg_replace("/^[\n\r]+[\n\r]+/m", "", $fnblock[0]->innertext); // remove blank lines
-        $r = $fnblock->find('ol');
+        $r = $fnblock[0]->find('ol');
         if (isset($r) && !empty($r)) {
-          $r[0]->start = $firstfn; // rewrite start attribute for the last ordered list of footnotes
+          $r[0]->start = $firstfn; // rewrite 'start' attribute for the original list of footnotes
         }
+        $fnblock[0]->innertext = preg_replace("/^[\n\r]+[\n\r]+/m", "", $fnblock[0]->innertext); // remove blank lines
       }
     }
 
