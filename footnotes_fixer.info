@@ -1,0 +1,12 @@
+name = Footnotes Fixer Filter
+description = Filter to fix footnotes when pagebreaks are present.
+core = 7.x
+package = Input filters
+
+dependencies[] = "simplehtmldom"
+
+version = "7.x-1.0"
+core = "7.x"
+project = "footnotes_fixer"
+datestamp = "1321824639"
+

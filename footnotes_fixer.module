@@ -1,0 +1,188 @@
+<?php
+
+/**
+* @file
+* footnotes_fixer.module
+*
+* Provides a very basic caption filter for input formats
+*/
+
+/**
+* Implements hook_init().
+*/
+function footnotes_fixer_init() {
+  $path = drupal_get_path('module', 'footnotes_fixer');
+}
+
+/**
+* Implements hook_filter_info().
+*/
+function footnotes_fixer_filter_info() {
+  $filters = array();
+  $filters['footnotes_fixer'] = array(
+    'title' => t('Fix footnotes when pagination is enabled'),
+    'process callback' => 'footnotes_fixer_process_filter',
+    'tips callback' => 'footnotes_fixer_tips',
+    'weight' => 20,
+  );
+  return $filters;
+}
+
+/**
+* Filter tips callback.
+*/
+function footnotes_fixer_tips($filter, $format, $long = FALSE) {
+  if ($long) {
+    return t('
+      <p><strong>Footnotes Fixer</strong></p>
+    <p>Tries to fix footnotes when pagination is applied.</p>');
+  }
+  else {
+    return check_plain(t('Moves footnotes in the right place when pagination is used.'));
+  }
+}
+
+/**
+* Filter process callback.
+*/
+function footnotes_fixer_process_filter($text, $filter) {
+  if (stristr($text, '[pagebreak]') === FALSE && stristr($text, '[header') === FALSE &&
+    stristr($text, '<!-- pagebreak -->') === FALSE) { return $text; }
+
+  $parser = new FofixParser($text);
+  $r = $parser->parse();
+  $parser->clear();
+
+  return $r;
+}
+
+
+/**
+* Parser class
+*/
+class FofixParser {
+  private $src;
+  private $fn_blocks;
+  private $html;
+  private $section_nr;
+  private $re_pb = '/(<p>\s*)?(<!--\s*pagebreak\s*-->)|(\[\s*(pagebreak\s*\]|(header\s*=\s*([^\]]*)\])))(\s*<\/p>)?/mi';
+
+  function __construct($src) {
+    $this->src = $src;
+    $this->fn_blocks = array();
+  }
+
+  private function my_parse_section($matches) {
+    if (isset($matches[0]))  {
+      $fnblock = $matches[0];
+      if (array_key_exists($this->section_nr, $this->fn_blocks)) {
+        $fnblock = $this->fn_blocks[$this->section_nr] . $fnblock;
+      }
+      $this->section_nr++;
+      return $fnblock;
+    }
+    else {
+      $this->section_nr++;
+      return $matches[0];
+    }
+  }
+
+  public function parse() {
+    $this->html = new simple_html_dom();
+    $this->html->load($this->src, true, false);                 // get HTML
+    $fnblock = $this->html->find('div.footnotes');              // get footnotes block
+
+    if (!isset($fnblock) || empty($fnblock)) {
+      return $this->src;
+    }
+
+    $fnblock = $fnblock[0];
+
+    if (!isset($fnblock) || empty($fnblock)) {
+      return $this->src;
+    }
+
+    $firstfn            = 1;                                    // ol start attribute initial number
+    $this->section_nr   = 0;                                    // section initial number
+    $fn_block_mem       = array();                              // buffer for memorizing footnotes
+    $fn_moved           = array();                              // buffer for memorizing moved footnotes
+    $orig_footnotes     = $fnblock->find('*[id^=fn:]');         // DOM part holding original footnotes block
+
+    // Memorize original footnotes
+    foreach($orig_footnotes as $k => $v) {
+      $fn_block_mem[$v->id] = $v->outertext;
+    }
+
+    // Iterate through sections and collect footnote blocks.
+    $sekcje = preg_split($this->re_pb, $this->src);
+    foreach($sekcje as $sekcja => $stxt) {
+      $t = str_get_html($stxt);
+      $footnotes = $t->find('a[rel=footnote]');
+      if (!empty($footnotes)) {
+        $rendered = '<div class="footnotes">' . "\n    <hr />\n      <ol " . 'start="' . $firstfn . '">' . "\n";
+        $firstfn++;
+        foreach($footnotes as $ahref) {
+          if (isset($ahref->href)) {
+            $fnid = strtolower(trim($ahref->href));
+            if (substr($fnid, 0, 4) === '#fn:') {
+              $fnid = ltrim($fnid, '#');
+              if (array_key_exists($fnid, $fn_block_mem)) {
+                $rendered .= "        " . $fn_block_mem[$fnid] . "\n";
+                $fn_moved[$fnid] = $sekcja;
+              }
+            }
+          }
+        }
+        $rendered .= "      </ol>\n    </div>\n";
+        $this->fn_blocks[$sekcja] = $rendered;
+      }
+
+      $t->clear();
+      unset($rendered, $footnotes, $t, $fnid, $ahref);
+    }
+
+    // Alter original footnotes block.
+    // Remove elements that were written out somewhere
+    // leaving the rest and elements that belong to the last section.
+    $last_section = max(array_keys($sekcje));
+
+    foreach($orig_footnotes as $k => $v) {
+      if (array_key_exists($v->id, $fn_moved)) {
+        if ($fn_moved[$v->id] !== $last_section) {
+          $v->outertext = '';
+        }
+      }
+    }
+
+    // Remove the whole original block if there are no footnotes anymore.
+    $fnblock->class = isset($fnblock->class) ? $fnblock->class . " fnorigin" : "fnorigin"; 
+    $this->html->load($this->html->save(), true, false);
+    $fnblock = $this->html->find('div.fnorigin');
+    if (!empty($fnblock)) {
+      $r = $fnblock[0]->find('*[id^=fn:]');
+      if (!isset($r) || empty($r)) {
+        $fnblock[0]->outertext = "";
+      }
+      else {
+        $fnblock[0]->innertext = preg_replace("/^[\n\r]+[\n\r]+/m", "", $fnblock[0]->innertext); // remove blank lines
+        $r = $fnblock->find('ol');
+        if (isset($r) && !empty($r)) {
+          $r[0]->start = $firstfn; // rewrite start attribute for the last ordered list of footnotes
+        }
+      }
+    }
+
+    $this->src = $this->html->outertext;    // write altered HTML for further processing
+    unset($fn_block_mem, $fnblock, $fn_moved, $r, $startfn);
+
+    // Add footnotes to each section.
+    return preg_replace_callback($this->re_pb, array(&$this, 'my_parse_section'), $this->src);
+  }
+
+  public function clear() {
+    $this->html->clear();
+    unset($this->html);
+    unset($this->fn_blocks);
+    unset($this->src);
+  }
+}
