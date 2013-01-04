@@ -4,7 +4,7 @@
 * @file
 * footnotes_fixer.module
 *
-* Provides a very basic caption filter for input formats
+* Fixes footnotes broken by pagination modules.
 */
 
 /**
